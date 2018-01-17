@@ -1,5 +1,6 @@
 import requests
 import time
+import simplejson as json
 from datetime import datetime, timedelta
 
 
@@ -26,8 +27,12 @@ def convert(dt_string):
 
 def get_time_points(lat, lon, time):
     url = 'http://api.sunrise-sunset.org/json?lat={0}&lng={1}&date={2}&formatted=0'
+    print url.format(lat, lon, local_now.strftime('%Y-%m-%d'))
     response = requests.get(url.format(lat, lon, local_now.strftime('%Y-%m-%d'))).json()
-    data = response['results']
+    return response['results']
+
+
+def convert_time_points(data):
     sunrise = convert(data['sunrise'])
     sunset = convert(data['sunset'])
     civil_start = convert(data['civil_twilight_begin'])
@@ -54,6 +59,15 @@ def try_fun(tries, fun, *args):
         except Exception:
             time.sleep(60)
 
+
+def get_time_points_stub():
+    return json.loads('{"sunrise":"2018-01-17T06:46:39+00:00","sunset":"2018-01-17T15:57:29+00:00","solar_noon":"2018-01-17T11:22:04+00:00","day_length":33050,"civil_twilight_begin":"2018-01-17T06:13:50+00:00","civil_twilight_end":"2018-01-17T16:30:18+00:00","nautical_twilight_begin":"2018-01-17T05:37:14+00:00","nautical_twilight_end":"2018-01-17T17:06:53+00:00","astronomical_twilight_begin":"2018-01-17T05:01:50+00:00","astronomical_twilight_end":"2018-01-17T17:42:17+00:00"}')
+
+
+def translate_coordinates_stub():
+    return (45.5759938, 12.0413745)
+
+
 # def add_bright(sunrise, sunset, offset):
 #     has_sun = sunrise is not None and sunset is not None
 #     if has_sun is True:
@@ -66,10 +80,13 @@ def try_fun(tries, fun, *args):
 
 address = 'Bordugo,Italy'
 
-lat, lon = try_fun(2, translate_coordinates, address)
-# lat, lon = (45.5759938, 12.0413745)
+# lat, lon = try_fun(2, translate_coordinates, address)
+lat, lon = translate_coordinates_stub()
 
 local_now = datetime.now()
-time_points = try_fun(2, get_time_points, lat, lon, local_now)
+# time_points = try_fun(2, get_time_points, lat, lon, local_now)
+time_points = get_time_points_stub()
 
-print time_points
+converted_time_points = convert_time_points(time_points)
+
+print converted_time_points
