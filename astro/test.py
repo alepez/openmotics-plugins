@@ -16,7 +16,7 @@ def translate_coordinates(address):
     return location['lat'], location['lng']
 
 
-def convert(dt_string):
+def convert_time_string(dt_string):
     import pytz
     date = datetime.strptime(dt_string, '%Y-%m-%dT%H:%M:%S+00:00')
     date = pytz.utc.localize(date)
@@ -33,22 +33,22 @@ def get_time_points(lat, lon, time):
 
 
 def convert_time_points(data):
-    sunrise = convert(data['sunrise'])
-    sunset = convert(data['sunset'])
-    civil_start = convert(data['civil_twilight_begin'])
-    civil_end = convert(data['civil_twilight_end'])
-    has_civil = civil_start is not None and civil_end is not None
-    nautical_start = convert(data['nautical_twilight_begin'])
-    nautical_end = convert(data['nautical_twilight_end'])
-    has_nautical = nautical_start is not None and nautical_end is not None
-    astronomical_start = convert(data['astronomical_twilight_begin'])
-    astronomical_end = convert(data['astronomical_twilight_end'])
-    has_astronomical = astronomical_start is not None and astronomical_end is not None
+    horizon_begin = convert_time_string(data['sunrise'])
+    horizon_end = convert_time_string(data['sunset'])
+    civil_begin = convert_time_string(data['civil_twilight_begin'])
+    civil_end = convert_time_string(data['civil_twilight_end'])
+    has_civil = civil_begin is not None and civil_end is not None
+    nautical_begin = convert_time_string(data['nautical_twilight_begin'])
+    nautical_end = convert_time_string(data['nautical_twilight_end'])
+    has_nautical = nautical_begin is not None and nautical_end is not None
+    astronomical_begin = convert_time_string(data['astronomical_twilight_begin'])
+    astronomical_end = convert_time_string(data['astronomical_twilight_end'])
+    has_astronomical = astronomical_begin is not None and astronomical_end is not None
     return {
-        'horizon': { 'begin': sunrise, 'end': sunset },
-        'civil': { 'begin': civil_start, 'end': civil_end } if has_civil else None,
-        'nautical': { 'begin': nautical_start, 'end': nautical_end } if has_nautical else None,
-        'astronomical': { 'begin': astronomical_start, 'end': astronomical_end } if has_astronomical else None,
+        'horizon': { 'begin': horizon_begin, 'end': horizon_end },
+        'civil': { 'begin': civil_begin, 'end': civil_end } if has_civil else None,
+        'nautical': { 'begin': nautical_begin, 'end': nautical_end } if has_nautical else None,
+        'astronomical': { 'begin': astronomical_begin, 'end': astronomical_end } if has_astronomical else None,
     }
 
 
@@ -68,14 +68,17 @@ def translate_coordinates_stub():
     return (45.5759938, 12.0413745)
 
 
-# def add_bright(sunrise, sunset, offset):
-#     has_sun = sunrise is not None and sunset is not None
-#     if has_sun is True:
-#         bright_start = sunrise + timedelta(minutes=self._bright_offset)
-#         bright_end = sunset - timedelta(minutes=self._bright_offset)
-#         has_bright = bright_start < bright_end
-#     else:
-#         has_bright = False
+def add_bright(time_points, offset):
+    horizon = time_points['horizon']
+    if horizon is None:
+        return time_points
+
+    bright_begin = horizon['begin'] + timedelta(minutes=offset)
+    bright_end = horizon['end'] - timedelta(minutes=offset)
+    has_bright = bright_begin < bright_end
+    time_points['bright'] = { 'begin': bright_begin, 'end': bright_end } if has_bright else None
+
+    return time_points
 
 
 address = 'Bordugo,Italy'
@@ -88,5 +91,8 @@ local_now = datetime.now()
 time_points = get_time_points_stub()
 
 converted_time_points = convert_time_points(time_points)
+with_bright = add_bright(converted_time_points, 60)
 
-print converted_time_points
+for i in [ 'horizon', 'civil', 'nautical', 'astronomical', 'bright' ]:
+    for j in [ 'begin', 'end' ]:
+        print "{0} - {1} - {2}".format(i, j, with_bright[i][j])
