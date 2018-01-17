@@ -88,24 +88,11 @@ class Astro(OMPluginBase):
         self._enabled = False
         if self._config['location'] != '':
             address = self._config['location']
-            api = 'https://maps.googleapis.com/maps/api/geocode/json?address={0}'.format(address)
-            try:
-                location = requests.get(api).json()
-            except:
-                self.logger('Error calling Google Maps API, waiting 2 minutes to try again')
-                time.sleep(120)
-                location = requests.get(api).json()
-            if location['status'] == 'OK':
-                self._latitude = location['results'][0]['geometry']['location']['lat']
-                self._longitude = location['results'][0]['geometry']['location']['lng']
-                self.logger('Latitude: {0} - Longitude: {1}'.format(self._latitude, self._longitude))
-                now = datetime.now(pytz.utc)
-                local_now = datetime.now()
-                self.logger('It\'s now {0} Local time'.format(local_now.strftime('%Y-%m-%d %H:%M:%S')))
-                self.logger('It\'s now {0} UTC'.format(now.strftime('%Y-%m-%d %H:%M:%S')))
+            self._location = Astro._translate_coordinates_stub(address)
+            if (self._location):
                 self._enabled = True
             else:
-                self.logger('Could not translate {0} to coordinates: {1}'.format(address, location['status']))
+                self.logger('Could not translate {0} to coordinates')
 
         self.logger('Astro is {0}'.format('enabled' if self._enabled else 'disabled'))
 
@@ -118,137 +105,167 @@ class Astro(OMPluginBase):
             return None
         return date
 
+    @staticmethod
+    def _get_time_points_stub(location, time):
+        return json.loads('{"sunrise":"2018-01-17T06:46:39+00:00","sunset":"2018-01-17T15:57:29+00:00","solar_noon":"2018-01-17T11:22:04+00:00","day_length":33050,"civil_twilight_begin":"2018-01-17T06:13:50+00:00","civil_twilight_end":"2018-01-17T16:30:18+00:00","nautical_twilight_begin":"2018-01-17T05:37:14+00:00","nautical_twilight_end":"2018-01-17T17:06:53+00:00","astronomical_twilight_begin":"2018-01-17T05:01:50+00:00","astronomical_twilight_end":"2018-01-17T17:42:17+00:00"}')
+
+    @staticmethod
+    def _translate_coordinates_stub(address):
+        return {'lat': 45.5759938, 'lng': 12.0413745}
+
+    @staticmethod
+    def _add_bright(time_points, offset):
+        horizon = time_points['horizon']
+        if horizon is None:
+            return time_points
+
+        bright_begin = horizon['begin'] + timedelta(minutes=offset)
+        bright_end = horizon['end'] - timedelta(minutes=offset)
+        has_bright = bright_begin < bright_end
+        time_points['bright'] = { 'begin': bright_begin, 'end': bright_end } if has_bright else None
+
+        return time_points
+
+
+    @staticmethod
+    def _convert_time_points(data):
+        horizon_begin = Astro._convert(data['sunrise'])
+        horizon_end = Astro._convert(data['sunset'])
+        civil_begin = Astro._convert(data['civil_twilight_begin'])
+        civil_end = Astro._convert(data['civil_twilight_end'])
+        has_civil = civil_begin is not None and civil_end is not None
+        nautical_begin = Astro._convert(data['nautical_twilight_begin'])
+        nautical_end = Astro._convert(data['nautical_twilight_end'])
+        has_nautical = nautical_begin is not None and nautical_end is not None
+        astronomical_begin = Astro._convert(data['astronomical_twilight_begin'])
+        astronomical_end = Astro._convert(data['astronomical_twilight_end'])
+        has_astronomical = astronomical_begin is not None and astronomical_end is not None
+        return {
+            'horizon': { 'begin': horizon_begin, 'end': horizon_end },
+            'civil': { 'begin': civil_begin, 'end': civil_end } if has_civil else None,
+            'nautical': { 'begin': nautical_begin, 'end': nautical_end } if has_nautical else None,
+            'astronomical': { 'begin': astronomical_begin, 'end': astronomical_end } if has_astronomical else None,
+        }
+
     def _loop(self):
         import pytz
 
         now = datetime.now(pytz.utc)
         local_now = datetime.now()
         local_tomorrow = datetime(local_now.year, local_now.month, local_now.day) + timedelta(days=1)
-        try:
-            data = requests.get('http://api.sunrise-sunset.org/json?lat={0}&lng={1}&date={2}&formatted=0'.format(
-                self._latitude, self._longitude, local_now.strftime('%Y-%m-%d')
-            )).json()
-            sleep = 24 * 60 * 60
-            bits = [True, True, True, True, True]  # ['bright', day, civil, nautical, astronomical]
-            if data['status'] == 'OK':
-                # Load data
-                sunrise = Astro._convert(data['results']['sunrise'])
-                sunset = Astro._convert(data['results']['sunset'])
-                has_sun = sunrise is not None and sunset is not None
-                if has_sun is True:
-                    bright_start = sunrise + timedelta(minutes=self._bright_offset)
-                    bright_end = sunset - timedelta(minutes=self._bright_offset)
-                    has_bright = bright_start < bright_end
-                else:
-                    has_bright = False
-                civil_start = Astro._convert(data['results']['civil_twilight_begin'])
-                civil_end = Astro._convert(data['results']['civil_twilight_end'])
-                has_civil = civil_start is not None and civil_end is not None
-                nautical_start = Astro._convert(data['results']['nautical_twilight_begin'])
-                nautical_end = Astro._convert(data['results']['nautical_twilight_end'])
-                has_nautical = nautical_start is not None and nautical_end is not None
-                astronomical_start = Astro._convert(data['results']['astronomical_twilight_begin'])
-                astronomical_end = Astro._convert(data['results']['astronomical_twilight_end'])
-                has_astronomical = astronomical_start is not None and astronomical_end is not None
-                # Analyse data
-                if not any([has_sun, has_civil, has_nautical, has_astronomical]):
-                    # This is an educated guess; Polar day (sun never sets) and polar night (sun never rises) can
-                    # happen in the polar circles. However, since we have far more "gradients" in the night part,
-                    # polar night (as defined here - pitch black) only happens very close to the poles. So it's
-                    # unlikely this plugin is used there.
-                    info = 'polar day'
-                    bits = [True, True, True, True, True]
-                    sleep = (local_tomorrow - local_now).total_seconds()
-                else:
-                    if has_bright is False:
-                        bits[0] = False
-                    else:
-                        bits[0] = bright_start < now < bright_end
-                        if bits[0] is True:
-                            sleep = min(sleep, (bright_end - now).total_seconds())
-                        elif now < bright_start:
-                            sleep = min(sleep, (bright_start - now).total_seconds())
-                    if has_sun is False:
-                        bits[1] = False
-                    else:
-                        bits[1] = sunrise < now < sunset
-                        if bits[1] is True:
-                            sleep = min(sleep, (sunset - now).total_seconds())
-                        elif now < sunrise:
-                            sleep = min(sleep, (sunrise - now).total_seconds())
-                    if has_civil is False:
-                        if has_sun is True:
-                            bits[2] = not bits[1]
-                        else:
-                            bits[2] = False
-                    else:
-                        bits[2] = civil_start < now < civil_end
-                        if bits[2] is True:
-                            sleep = min(sleep, (civil_end - now).total_seconds())
-                        elif now < sunrise:
-                            sleep = min(sleep, (civil_start - now).total_seconds())
-                    if has_nautical is False:
-                        if has_sun is True or has_civil is True:
-                            bits[3] = not bits[2]
-                        else:
-                            bits[3] = False
-                    else:
-                        bits[3] = nautical_start < now < nautical_end
-                        if bits[3] is True:
-                            sleep = min(sleep, (nautical_end - now).total_seconds())
-                        elif now < sunrise:
-                            sleep = min(sleep, (nautical_start - now).total_seconds())
-                    if has_astronomical is False:
-                        if has_sun is True or has_civil is True or has_nautical is True:
-                            bits[4] = not bits[3]
-                        else:
-                            bits[4] = False
-                    else:
-                        bits[4] = astronomical_start < now < astronomical_end
-                        if bits[4] is True:
-                            sleep = min(sleep, (astronomical_end - now).total_seconds())
-                        elif now < sunrise:
-                            sleep = min(sleep, (astronomical_start - now).total_seconds())
-                    sleep = min(sleep, (local_tomorrow - local_now).total_seconds())
-                    info = 'night'
-                    if bits[4] is True:
-                        info = 'astronimical twilight'
-                    if bits[3] is True:
-                        info = 'nautical twilight'
-                    if bits[2] is True:
-                        info = 'civil twilight'
-                    if bits[1] is True:
-                        info = 'day'
-                    if bits[0] is True:
-                        info = 'day (bright)'
-                # Set bits in system
-                for index, bit in {0: self._bright_bit,
-                                    1: self._horizon_bit,
-                                    2: self._civil_bit,
-                                    3: self._nautical_bit,
-                                    4: self._astronomical_bit}.iteritems():
-                    if bit > -1:
-                        result = json.loads(self.webinterface.do_basic_action(None, 237 if bits[index] else 238, bit))
-                        if result['success'] is False:
-                            self.logger('Failed to set bit {0} to {1}'.format(bit, 1 if bits[index] else 0))
-                if self._previous_bits != bits:
-                    if self._group_action != -1:
-                        result = json.loads(self.webinterface.do_basic_action(None, 2, self._group_action))
-                        if result['success'] is True:
-                            self.logger('Group Action {0} triggered'.format(self._group_action))
-                        else:
-                            self.logger('Failed to trigger Group Action {0}'.format(self._group_action))
-                    self._previous_bits = bits
-                self.logger('It\'s {0}. Going to sleep for {1} seconds'.format(info, round(sleep, 1)))
-                time.sleep(sleep + 5)
-            else:
-                self.logger('Could not load data: {0}'.format(data['status']))
-                sleep = (local_tomorrow - local_now).total_seconds()
-                time.sleep(sleep + 5)
-        except Exception as ex:
-            self.logger('Error figuring out where the sun is: {0}'.format(ex))
+        time_points = Astro._add_bright(Astro._convert_time_points(Astro._get_time_points_stub(self._location, local_now)), self._bright_offset)
+        sleep = 24 * 60 * 60
+        bits = [True, True, True, True, True]  # ['bright', day, civil, nautical, astronomical]
+
+        # FIXME sleep if cannot get time points
+
+        has_sun = time_points.horizon is not None
+        has_civil = time_points.civil is not None
+        has_nautical = time_points.nautical is not None
+        has_astronomical = time_points.astronomical is not None
+        has_bright = time_points.bright is not None
+        sunrise = time_points['horizon']['begin']
+        sunset = time_points['horizon']['end']
+        civil_start = time_points['civil']['begin']
+        civil_end = time_points['civil']['end']
+        bright_start = time_points['bright']['begin']
+        bright_end = time_points['bright']['end']
+        nautical_start = time_points['nautical']['begin']
+        nautical_end = time_points['nautical']['end']
+        astronomical_start = time_points['astronomical']['begin']
+        astronomical_end = time_points['astronomical']['end']
+
+        # Analyse data
+        if not any([has_sun, has_civil, has_nautical, has_astronomical]):
+            # This is an educated guess; Polar day (sun never sets) and polar night (sun never rises) can
+            # happen in the polar circles. However, since we have far more "gradients" in the night part,
+            # polar night (as defined here - pitch black) only happens very close to the poles. So it's
+            # unlikely this plugin is used there.
+            info = 'polar day'
+            bits = [True, True, True, True, True]
             sleep = (local_tomorrow - local_now).total_seconds()
-            time.sleep(sleep + 5)
+        else:
+            if has_bright is False:
+                bits[0] = False
+            else:
+                bits[0] = bright_start < now < bright_end
+                if bits[0] is True:
+                    sleep = min(sleep, (bright_end - now).total_seconds())
+                elif now < bright_start:
+                    sleep = min(sleep, (bright_start - now).total_seconds())
+            if has_sun is False:
+                bits[1] = False
+            else:
+                bits[1] = sunrise < now < sunset
+                if bits[1] is True:
+                    sleep = min(sleep, (sunset - now).total_seconds())
+                elif now < sunrise:
+                    sleep = min(sleep, (sunrise - now).total_seconds())
+            if has_civil is False:
+                if has_sun is True:
+                    bits[2] = not bits[1]
+                else:
+                    bits[2] = False
+            else:
+                bits[2] = civil_start < now < civil_end
+                if bits[2] is True:
+                    sleep = min(sleep, (civil_end - now).total_seconds())
+                elif now < sunrise:
+                    sleep = min(sleep, (civil_start - now).total_seconds())
+            if has_nautical is False:
+                if has_sun is True or has_civil is True:
+                    bits[3] = not bits[2]
+                else:
+                    bits[3] = False
+            else:
+                bits[3] = nautical_start < now < nautical_end
+                if bits[3] is True:
+                    sleep = min(sleep, (nautical_end - now).total_seconds())
+                elif now < sunrise:
+                    sleep = min(sleep, (nautical_start - now).total_seconds())
+            if has_astronomical is False:
+                if has_sun is True or has_civil is True or has_nautical is True:
+                    bits[4] = not bits[3]
+                else:
+                    bits[4] = False
+            else:
+                bits[4] = astronomical_start < now < astronomical_end
+                if bits[4] is True:
+                    sleep = min(sleep, (astronomical_end - now).total_seconds())
+                elif now < sunrise:
+                    sleep = min(sleep, (astronomical_start - now).total_seconds())
+            sleep = min(sleep, (local_tomorrow - local_now).total_seconds())
+            info = 'night'
+            if bits[4] is True:
+                info = 'astronimical twilight'
+            if bits[3] is True:
+                info = 'nautical twilight'
+            if bits[2] is True:
+                info = 'civil twilight'
+            if bits[1] is True:
+                info = 'day'
+            if bits[0] is True:
+                info = 'day (bright)'
+        # Set bits in system
+        for index, bit in {0: self._bright_bit,
+                           1: self._horizon_bit,
+                           2: self._civil_bit,
+                           3: self._nautical_bit,
+                           4: self._astronomical_bit}.iteritems():
+            if bit > -1:
+                result = json.loads(self.webinterface.do_basic_action(None, 237 if bits[index] else 238, bit))
+                if result['success'] is False:
+                    self.logger('Failed to set bit {0} to {1}'.format(bit, 1 if bits[index] else 0))
+        if self._previous_bits != bits:
+            if self._group_action != -1:
+                result = json.loads(self.webinterface.do_basic_action(None, 2, self._group_action))
+                if result['success'] is True:
+                    self.logger('Group Action {0} triggered'.format(self._group_action))
+                else:
+                    self.logger('Failed to trigger Group Action {0}'.format(self._group_action))
+            self._previous_bits = bits
+        self.logger('It\'s {0}. Going to sleep for {1} seconds'.format(info, round(sleep, 1)))
+        time.sleep(sleep + 5)
 
 
     @background_task
