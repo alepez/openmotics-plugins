@@ -1,10 +1,10 @@
 #!/bin/sh
-if [ $# -ne 3 ]
+if [ $# -le 3 ]
 then
   echo "Usage: ./`basename $0` <package> <ip/hostname of gateway> <username>"
 else
   checksum=`md5sum $1 | cut -d ' ' -f 1`
-  read -s -p "Enter password: " password
+  if [ -z "${4}" ]; then read -s -p "Enter password: " password; else password="${4}"; fi
   echo
   login=`curl -sk -X GET "https://$2/login?username=$3&password=$password"`
   success=`echo $login | grep -Po '"success": \K\w+'`
