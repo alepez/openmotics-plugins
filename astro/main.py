@@ -15,11 +15,12 @@ from plugins.base import om_expose, background_task, OMPluginBase, PluginConfigC
 
 
 def try_fun(tries, fun, *args):
-    while --tries > 0:
+    while tries > 0:
         try:
             return fun(*args)
         except Exception as e:
             print e
+            tries -= 1
             time.sleep(60)
 
 
