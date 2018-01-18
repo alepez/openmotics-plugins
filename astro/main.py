@@ -18,8 +18,7 @@ def try_fun(tries, fun, *args):
     while tries > 0:
         try:
             return fun(*args)
-        except Exception as e:
-            print e
+        except Exception:
             tries -= 1
             time.sleep(60)
 
@@ -144,7 +143,6 @@ class Astro(OMPluginBase):
         response = requests.get(url.format(address)).json()
 
         if response['status'] != 'OK':
-            print response
             raise Exception('Cannot translate address to coordinates')
 
         return response['results'][0]['geometry']['location']
