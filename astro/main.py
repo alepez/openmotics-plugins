@@ -2,12 +2,16 @@
 An astronomical plugin, for providing the system with astronomical data (e.g. whether it's day or not, based on the sun's location)
 """
 
+import re
 import sys
 import time
 import requests
 import simplejson as json
 from datetime import datetime, timedelta
-from plugins.base import om_expose, receive_events, background_task, OMPluginBase, PluginConfigChecker
+from plugins.base import om_expose, background_task, OMPluginBase, PluginConfigChecker
+
+# FIXME Something seems wrong with UTC to localtime. Why using localtime at all?
+# FIXME Version should be 0.5.3 or 0.6.0
 
 
 class Astro(OMPluginBase):
@@ -87,7 +91,7 @@ class Astro(OMPluginBase):
         self._enabled = False
         if self._config['location'] != '':
             address = self._config['location']
-            self._location = Astro._translate_coordinates_stub(address)
+            self._location = self._translate_coordinates(address)
             if (self._location):
                 self._enabled = True
             else:
@@ -111,12 +115,29 @@ class Astro(OMPluginBase):
         return response['results']
 
     @staticmethod
-    def _get_time_points_stub(location, local_now):
-        return json.loads('{"sunrise":"2018-01-17T06:46:39+00:00","sunset":"2018-01-17T15:57:29+00:00","solar_noon":"2018-01-17T11:22:04+00:00","day_length":33050,"civil_twilight_begin":"2018-01-17T06:13:50+00:00","civil_twilight_end":"2018-01-17T16:30:18+00:00","nautical_twilight_begin":"2018-01-17T05:37:14+00:00","nautical_twilight_end":"2018-01-17T17:06:53+00:00","astronomical_twilight_begin":"2018-01-17T05:01:50+00:00","astronomical_twilight_end":"2018-01-17T17:42:17+00:00"}')
+    def _parse_coordinates(coord_str):
+        m = re.match(r'(\d+\.\d+)\ +(\d+\.\d+)', coord_str)
+        if not m:
+            return None
+        lat = m.group(1)
+        lng = m.group(2)
+        return {'lat': lat, 'lng': lng}
 
-    @staticmethod
-    def _translate_coordinates_stub(address):
-        return {'lat': 45.5759938, 'lng': 12.0413745}
+    def _translate_coordinates(self, address):
+        location = Astro._parse_coordinates(address)
+        if location:
+            self.logger('Location provided as coordinates')
+            return location
+
+        self.logger('Location provided as address, translating to coordinates...')
+        url = 'https://maps.googleapis.com/maps/api/geocode/json?address={0}'
+        response = requests.get(url.format(address)).json()
+
+        if response['status'] != 'OK':
+            print response
+            raise Exception('Cannot translate address to coordinates')
+
+        return response['results'][0]['geometry']['location']
 
     @staticmethod
     def _add_bright(time_points, offset):

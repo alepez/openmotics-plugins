@@ -1,10 +1,20 @@
 import requests
 import time
 import simplejson as json
+import re
 from datetime import datetime, timedelta
 
+def parse_coordinates(coord_str):
+    m = re.match(r'(\d+\.\d+)\ +(\d+\.\d+)', coord_str)
+    if not m: return None
+    lat = m.group(1)
+    lng = m.group(2)
+    return {'lat': lat, 'lng': lng}
 
 def translate_coordinates(address):
+    location = parse_coordinates(address)
+    if location: return location
+
     url = 'https://maps.googleapis.com/maps/api/geocode/json?address={0}'
     response = requests.get(url.format(address)).json()
 
@@ -82,16 +92,18 @@ def add_bright(time_points, offset):
 
 address = 'Bordugo,Italy'
 
+print translate_coordinates('45.5759938 12.0413745')
+print parse_coordinates('Bordugo, Italy')
+
 # location = try_fun(2, translate_coordinates, address)
-location = translate_coordinates_stub(address)
-
-local_now = datetime.now()
+# location = translate_coordinates_stub(address)
+# local_now = datetime.now()
 # time_points = try_fun(2, get_time_points, location, local_now)
-time_points = get_time_points_stub(location, local_now)
+# time_points = get_time_points_stub(location, local_now)
 
-converted_time_points = convert_time_points(time_points)
-with_bright = add_bright(converted_time_points, 60)
+# converted_time_points = convert_time_points(time_points)
+# with_bright = add_bright(converted_time_points, 60)
 
-for i in [ 'horizon', 'civil', 'nautical', 'astronomical', 'bright' ]:
-    for j in [ 'begin', 'end' ]:
-        print "{0} - {1} - {2}".format(i, j, with_bright[i][j])
+# for i in [ 'horizon', 'civil', 'nautical', 'astronomical', 'bright' ]:
+#     for j in [ 'begin', 'end' ]:
+#         print "{0} - {1} - {2}".format(i, j, with_bright[i][j])
