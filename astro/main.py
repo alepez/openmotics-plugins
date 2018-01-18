@@ -14,6 +14,15 @@ from plugins.base import om_expose, background_task, OMPluginBase, PluginConfigC
 # FIXME Version should be 0.5.3 or 0.6.0
 
 
+def try_fun(tries, fun, *args):
+    while --tries > 0:
+        try:
+            return fun(*args)
+        except Exception as e:
+            print e
+            time.sleep(60)
+
+
 class Astro(OMPluginBase):
     """
     An astronomical plugin, for providing the system with astronomical data (e.g. whether it's day or not, based on the sun's location)
@@ -172,13 +181,29 @@ class Astro(OMPluginBase):
             'astronomical': {'begin': astronomical_begin, 'end': astronomical_end} if has_astronomical else None,
         }
 
+    # FIXME _loop needs refactory, too complex
     def _loop(self):
         import pytz
 
         now = datetime.now(pytz.utc)
         local_now = datetime.now()
         local_tomorrow = datetime(local_now.year, local_now.month, local_now.day) + timedelta(days=1)
-        time_points = Astro._get_time_points(self._location, local_now)
+
+        # Try at most two times
+        time_points = try_fun(2, Astro._get_time_points, self._location, local_now)
+
+        # Use cached values (yesterday) if today is not available
+        if time_points:
+            self._time_points = time_points
+        elif self._time_points is not None:
+            self.logger('Cannot get time points, using cached values')
+            time_points = self._time_points
+
+        if not time_points:
+            self.logger('Cannot get time points. Astro disabled.')
+            self._enabled = False
+            return
+
         time_points = Astro._convert_time_points(time_points)
         time_points = Astro._add_bright(time_points, self._bright_offset)
         sleep = 24 * 60 * 60
@@ -193,8 +218,8 @@ class Astro(OMPluginBase):
         has_nautical = time_points['nautical'] is not None
         has_astronomical = time_points['astronomical'] is not None
         has_bright = time_points['bright'] is not None
-        sunrise = time_points['horizon']['begin']
-        sunset = time_points['horizon']['end']
+        horizon_begin = time_points['horizon']['begin']
+        horizon_end = time_points['horizon']['end']
         civil_begin = time_points['civil']['begin']
         civil_end = time_points['civil']['end']
         bright_begin = time_points['bright']['begin']
@@ -225,11 +250,11 @@ class Astro(OMPluginBase):
             if has_sun is False:
                 bits[1] = False
             else:
-                bits[1] = sunrise < now < sunset
+                bits[1] = horizon_begin < now < horizon_end
                 if bits[1] is True:
-                    sleep = min(sleep, (sunset - now).total_seconds())
-                elif now < sunrise:
-                    sleep = min(sleep, (sunrise - now).total_seconds())
+                    sleep = min(sleep, (horizon_end - now).total_seconds())
+                elif now < horizon_begin:
+                    sleep = min(sleep, (horizon_begin - now).total_seconds())
             if has_civil is False:
                 if has_sun is True:
                     bits[2] = not bits[1]
@@ -239,7 +264,7 @@ class Astro(OMPluginBase):
                 bits[2] = civil_begin < now < civil_end
                 if bits[2] is True:
                     sleep = min(sleep, (civil_end - now).total_seconds())
-                elif now < sunrise:
+                elif now < horizon_begin:
                     sleep = min(sleep, (civil_begin - now).total_seconds())
             if has_nautical is False:
                 if has_sun is True or has_civil is True:
@@ -250,7 +275,7 @@ class Astro(OMPluginBase):
                 bits[3] = nautical_begin < now < nautical_end
                 if bits[3] is True:
                     sleep = min(sleep, (nautical_end - now).total_seconds())
-                elif now < sunrise:
+                elif now < horizon_begin:
                     sleep = min(sleep, (nautical_begin - now).total_seconds())
             if has_astronomical is False:
                 if has_sun is True or has_civil is True or has_nautical is True:
@@ -261,7 +286,7 @@ class Astro(OMPluginBase):
                 bits[4] = astronomical_begin < now < astronomical_end
                 if bits[4] is True:
                     sleep = min(sleep, (astronomical_end - now).total_seconds())
-                elif now < sunrise:
+                elif now < horizon_begin:
                     sleep = min(sleep, (astronomical_begin - now).total_seconds())
             sleep = min(sleep, (local_tomorrow - local_now).total_seconds())
             info = 'night'
@@ -298,6 +323,7 @@ class Astro(OMPluginBase):
 
     @background_task
     def run(self):
+        self._time_points = None
         self._previous_bits = [None, None, None, None, None]
         while True:
             if self._enabled:
