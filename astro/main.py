@@ -29,7 +29,7 @@ class Astro(OMPluginBase):
     """
 
     name = 'Astro'
-    version = '0.5.5'
+    version = '0.5.2'
     interfaces = [('config', '1.0')]
 
     config_description = [{'name': 'location',
