@@ -18,7 +18,7 @@ class Astro(OMPluginBase):
     """
 
     name = 'Astro'
-    version = '0.6.2'
+    version = '0.6.3'
     interfaces = [('config', '1.0')]
 
     config_description = [{'name': 'location',
@@ -171,6 +171,17 @@ class Astro(OMPluginBase):
         self._sleeper.clear()
         self._sleeper.wait()
 
+    def get_sun_data_or_cached(self):
+        try:
+            local_now = datetime.now()
+            data = requests.get('http://api.sunrise-sunset.org/json?lat={0}&lng={1}&date={2}&formatted=0'.format(
+                self._latitude, self._longitude, local_now.strftime('%Y-%m-%d')
+            )).json()
+            self.sunrise_data = data
+        except Exception as ex:
+            self.logger('Error requesting sun data: {0}'.format(ex))
+        return self.sunrise_data
+
     @staticmethod
     def _convert(dt_string):
         import pytz
@@ -190,9 +201,7 @@ class Astro(OMPluginBase):
                 local_now = datetime.now()
                 local_tomorrow = datetime(local_now.year, local_now.month, local_now.day) + timedelta(days=1)
                 try:
-                    data = requests.get('http://api.sunrise-sunset.org/json?lat={0}&lng={1}&date={2}&formatted=0'.format(
-                        self._latitude, self._longitude, local_now.strftime('%Y-%m-%d')
-                    )).json()
+                    data = self.get_sun_data_or_cached()
                     sleep = 24 * 60 * 60
                     bits = [True, True, True, True, True]  # ['bright', day, civil, nautical, astronomical]
                     if data['status'] == 'OK':
