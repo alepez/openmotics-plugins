@@ -10,7 +10,7 @@ import simplejson as json
 from threading import Thread, Event
 from datetime import datetime, timedelta
 from plugins.base import om_expose, background_task, OMPluginBase, PluginConfigChecker
-import _strptime
+import _strptime # Fix error with implicit import on different thread
 
 
 class Astro(OMPluginBase):
@@ -19,7 +19,7 @@ class Astro(OMPluginBase):
     """
 
     name = 'Astro'
-    version = '0.6.12'
+    version = '0.6.14'
     interfaces = [('config', '1.0')]
 
     config_description = [{'name': 'location',
@@ -172,9 +172,9 @@ class Astro(OMPluginBase):
     def get_sun_data_or_cached(self):
         try:
             self.logger("getting sun data")
-            now = datetime.utcnow()
+            local_now = datetime.now()
             data = requests.get('http://api.sunrise-sunset.org/json?lat={0}&lng={1}&date={2}&formatted=0'.format(
-                self._latitude, self._longitude, now.strftime('%Y-%m-%d')
+                self._latitude, self._longitude, local_now.strftime('%Y-%m-%d')
             )).json()
             self.logger('sun data received')
             self.sunrise_data = data
@@ -230,6 +230,10 @@ class Astro(OMPluginBase):
                         self.logger("astro beg: {} UTC".format(astronomical_beg))
                         self.logger("nauti beg: {} UTC".format(nautical_beg))
                         self.logger("civil beg: {} UTC".format(civil_beg))
+                        self.logger("sunrise:   {} UTC".format(sunrise))
+                        self.logger("bright_beg:{} UTC".format(bright_beg))
+                        self.logger("bright_end:{} UTC".format(bright_end))
+                        self.logger("sunset:    {} UTC".format(sunset))
                         self.logger("civil end: {} UTC".format(civil_end))
                         self.logger("nauti end: {} UTC".format(nautical_end))
                         self.logger("astro end: {} UTC".format(astronomical_end))
