@@ -19,7 +19,7 @@ class Astro(OMPluginBase):
     """
 
     name = 'Astro'
-    version = '0.6.8'
+    version = '0.6.12'
     interfaces = [('config', '1.0')]
 
     config_description = [{'name': 'location',
@@ -109,8 +109,8 @@ class Astro(OMPluginBase):
         coordinates = self._config.get('coordinates', '').strip()
         match = re.match(r'^(\d+\.\d+);(\d+\.\d+)$', coordinates)
         if match:
-            self._latitude = match.group(0)
-            self._longitude = match.group(1)
+            self._latitude = match.group(1)
+            self._longitude = match.group(2)
             self._enable_plugin()
         else:
             thread = Thread(target=self._translate_address)
@@ -171,10 +171,12 @@ class Astro(OMPluginBase):
 
     def get_sun_data_or_cached(self):
         try:
+            self.logger("getting sun data")
             now = datetime.utcnow()
             data = requests.get('http://api.sunrise-sunset.org/json?lat={0}&lng={1}&date={2}&formatted=0'.format(
                 self._latitude, self._longitude, now.strftime('%Y-%m-%d')
             )).json()
+            self.logger('sun data received')
             self.sunrise_data = data
         except Exception as ex:
             self.logger('Error requesting sun data: {0}'.format(ex))
@@ -202,6 +204,7 @@ class Astro(OMPluginBase):
                 self.logger('It\'s now {0} UTC'.format(now.strftime('%Y-%m-%d %H:%M:%S')))
                 try:
                     data = self.get_sun_data_or_cached()
+                    self.logger(data['status'])
                     sleep = 24 * 60 * 60
                     bits = [True, True, True, True, True]  # ['bright', day, civil, nautical, astronomical]
                     if data['status'] == 'OK':
@@ -210,20 +213,27 @@ class Astro(OMPluginBase):
                         sunset = Astro._convert(data['results']['sunset'])
                         has_sun = sunrise is not None and sunset is not None
                         if has_sun is True:
-                            bright_start = sunrise + timedelta(minutes=self._bright_offset)
+                            bright_beg = sunrise + timedelta(minutes=self._bright_offset)
                             bright_end = sunset - timedelta(minutes=self._bright_offset)
-                            has_bright = bright_start < bright_end
+                            has_bright = bright_beg < bright_end
                         else:
                             has_bright = False
-                        civil_start = Astro._convert(data['results']['civil_twilight_begin'])
+                        civil_beg = Astro._convert(data['results']['civil_twilight_begin'])
                         civil_end = Astro._convert(data['results']['civil_twilight_end'])
-                        has_civil = civil_start is not None and civil_end is not None
-                        nautical_start = Astro._convert(data['results']['nautical_twilight_begin'])
+                        has_civil = civil_beg is not None and civil_end is not None
+                        nautical_beg = Astro._convert(data['results']['nautical_twilight_begin'])
                         nautical_end = Astro._convert(data['results']['nautical_twilight_end'])
-                        has_nautical = nautical_start is not None and nautical_end is not None
-                        astronomical_start = Astro._convert(data['results']['astronomical_twilight_begin'])
+                        has_nautical = nautical_beg is not None and nautical_end is not None
+                        astronomical_beg = Astro._convert(data['results']['astronomical_twilight_begin'])
                         astronomical_end = Astro._convert(data['results']['astronomical_twilight_end'])
-                        has_astronomical = astronomical_start is not None and astronomical_end is not None
+                        has_astronomical = astronomical_beg is not None and astronomical_end is not None
+                        self.logger("astro beg: {} UTC".format(astronomical_beg))
+                        self.logger("nauti beg: {} UTC".format(nautical_beg))
+                        self.logger("civil beg: {} UTC".format(civil_beg))
+                        self.logger("civil end: {} UTC".format(civil_end))
+                        self.logger("nauti end: {} UTC".format(nautical_end))
+                        self.logger("astro end: {} UTC".format(astronomical_end))
+                        self.logger("now: {} UTC".format(now))
                         # Analyse data
                         if not any([has_sun, has_civil, has_nautical, has_astronomical]):
                             # This is an educated guess; Polar day (sun never sets) and polar night (sun never rises) can
@@ -237,11 +247,11 @@ class Astro(OMPluginBase):
                             if has_bright is False:
                                 bits[0] = False
                             else:
-                                bits[0] = bright_start < now < bright_end
+                                bits[0] = bright_beg < now < bright_end
                                 if bits[0] is True:
                                     sleep = min(sleep, int((bright_end - now).total_seconds()))
-                                elif now < bright_start:
-                                    sleep = min(sleep, int((bright_start - now).total_seconds()))
+                                elif now < bright_beg:
+                                    sleep = min(sleep, int((bright_beg - now).total_seconds()))
                             if has_sun is False:
                                 bits[1] = False
                             else:
@@ -256,37 +266,37 @@ class Astro(OMPluginBase):
                                 else:
                                     bits[2] = False
                             else:
-                                bits[2] = civil_start < now < civil_end
+                                bits[2] = civil_beg < now < civil_end
                                 if bits[2] is True:
                                     sleep = min(sleep, (civil_end - now).total_seconds())
                                 elif now < sunrise:
-                                    sleep = min(sleep, (civil_start - now).total_seconds())
+                                    sleep = min(sleep, (civil_beg - now).total_seconds())
                             if has_nautical is False:
                                 if has_sun is True or has_civil is True:
                                     bits[3] = not bits[2]
                                 else:
                                     bits[3] = False
                             else:
-                                bits[3] = nautical_start < now < nautical_end
+                                bits[3] = nautical_beg < now < nautical_end
                                 if bits[3] is True:
                                     sleep = min(sleep, (nautical_end - now).total_seconds())
                                 elif now < sunrise:
-                                    sleep = min(sleep, (nautical_start - now).total_seconds())
+                                    sleep = min(sleep, (nautical_beg - now).total_seconds())
                             if has_astronomical is False:
                                 if has_sun is True or has_civil is True or has_nautical is True:
                                     bits[4] = not bits[3]
                                 else:
                                     bits[4] = False
                             else:
-                                bits[4] = astronomical_start < now < astronomical_end
+                                bits[4] = astronomical_beg < now < astronomical_end
                                 if bits[4] is True:
                                     sleep = min(sleep, (astronomical_end - now).total_seconds())
                                 elif now < sunrise:
-                                    sleep = min(sleep, (astronomical_start - now).total_seconds())
+                                    sleep = min(sleep, (astronomical_beg - now).total_seconds())
                             sleep = min(sleep, Astro._seconds_to_tomorrow())
                             info = 'night'
                             if bits[4] is True:
-                                info = 'astronimical twilight'
+                                info = 'astronomical twilight'
                             if bits[3] is True:
                                 info = 'nautical twilight'
                             if bits[2] is True:
