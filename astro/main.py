@@ -10,6 +10,7 @@ import simplejson as json
 from threading import Thread, Event
 from datetime import datetime, timedelta
 from plugins.base import om_expose, background_task, OMPluginBase, PluginConfigChecker
+import _strptime
 
 
 class Astro(OMPluginBase):
@@ -18,7 +19,7 @@ class Astro(OMPluginBase):
     """
 
     name = 'Astro'
-    version = '0.6.3'
+    version = '0.6.8'
     interfaces = [('config', '1.0')]
 
     config_description = [{'name': 'location',
@@ -148,11 +149,8 @@ class Astro(OMPluginBase):
                 return  # It might have been set in the mean time
 
     def _enable_plugin(self):
-        import pytz
-        now = datetime.now(pytz.utc)
-        local_now = datetime.now()
+        now = datetime.utcnow()
         self.logger('Latitude: {0} - Longitude: {1}'.format(self._latitude, self._longitude))
-        self.logger('It\'s now {0} Local time'.format(local_now.strftime('%Y-%m-%d %H:%M:%S')))
         self.logger('It\'s now {0} UTC'.format(now.strftime('%Y-%m-%d %H:%M:%S')))
         self.logger('Astro is enabled')
         self._enabled = True
@@ -173,9 +171,9 @@ class Astro(OMPluginBase):
 
     def get_sun_data_or_cached(self):
         try:
-            local_now = datetime.now()
+            now = datetime.utcnow()
             data = requests.get('http://api.sunrise-sunset.org/json?lat={0}&lng={1}&date={2}&formatted=0'.format(
-                self._latitude, self._longitude, local_now.strftime('%Y-%m-%d')
+                self._latitude, self._longitude, now.strftime('%Y-%m-%d')
             )).json()
             self.sunrise_data = data
         except Exception as ex:
@@ -184,22 +182,24 @@ class Astro(OMPluginBase):
 
     @staticmethod
     def _convert(dt_string):
-        import pytz
         date = datetime.strptime(dt_string, '%Y-%m-%dT%H:%M:%S+00:00')
-        date = pytz.utc.localize(date)
         if date.year == 1970:
             return None
         return date
 
+    @staticmethod
+    def _seconds_to_tomorrow():
+        local_now = datetime.now()
+        local_tomorrow = datetime(local_now.year, local_now.month, local_now.day) + timedelta(days=1)
+        return int((local_tomorrow - local_now).total_seconds())
+
     @background_task
     def run(self):
-        import pytz
         self._previous_bits = [None, None, None, None, None]
         while True:
             if self._enabled:
-                now = datetime.now(pytz.utc)
-                local_now = datetime.now()
-                local_tomorrow = datetime(local_now.year, local_now.month, local_now.day) + timedelta(days=1)
+                now = datetime.utcnow()
+                self.logger('It\'s now {0} UTC'.format(now.strftime('%Y-%m-%d %H:%M:%S')))
                 try:
                     data = self.get_sun_data_or_cached()
                     sleep = 24 * 60 * 60
@@ -232,7 +232,7 @@ class Astro(OMPluginBase):
                             # unlikely this plugin is used there.
                             info = 'polar day'
                             bits = [True, True, True, True, True]
-                            sleep = (local_tomorrow - local_now).total_seconds()
+                            sleep = Astro._seconds_to_tomorrow()
                         else:
                             if has_bright is False:
                                 bits[0] = False
@@ -283,7 +283,7 @@ class Astro(OMPluginBase):
                                     sleep = min(sleep, (astronomical_end - now).total_seconds())
                                 elif now < sunrise:
                                     sleep = min(sleep, (astronomical_start - now).total_seconds())
-                            sleep = min(sleep, int((local_tomorrow - local_now).total_seconds()))
+                            sleep = min(sleep, Astro._seconds_to_tomorrow())
                             info = 'night'
                             if bits[4] is True:
                                 info = 'astronimical twilight'
@@ -317,11 +317,11 @@ class Astro(OMPluginBase):
                         self._sleep(time.time() + sleep + 5)
                     else:
                         self.logger('Could not load data: {0}'.format(data['status']))
-                        sleep = (local_tomorrow - local_now).total_seconds()
+                        sleep = Astro._seconds_to_tomorrow()
                         self._sleep(time.time() + sleep + 5)
                 except Exception as ex:
                     self.logger('Error figuring out where the sun is: {0}'.format(ex))
-                    sleep = (local_tomorrow - local_now).total_seconds()
+                    sleep = Astro._seconds_to_tomorrow()
                     self._sleep(time.time() + sleep + 5)
             else:
                 self._sleep(time.time() + 30)
